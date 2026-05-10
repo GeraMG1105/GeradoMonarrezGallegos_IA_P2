@@ -1,0 +1,250 @@
+"""
+Algoritmos Geneticos (Genetic Algorithms)
+
+Metodo de busqueda y optimizacion inspirado en la teoria de la
+evolucion de Darwin y la genetica, desarrollado por John Holland
+en 1975. Mantiene una poblacion de soluciones candidatas que
+evolucionan mediante operadores geneticos hasta encontrar la
+mejor solucion posible.
+
+Componentes principales:
+  - Individuo (Cromosoma): solucion candidata codificada como lista.
+  - Poblacion: conjunto de individuos que evolucionan juntos.
+  - Fitness: medida de que tan buena es una solucion.
+  - Seleccion: elegir los mejores individuos para reproducirse.
+  - Cruce (Crossover): combinar dos individuos para generar hijos.
+  - Mutacion: cambio aleatorio pequeno para mantener diversidad.
+  - Generacion: una iteracion completa del ciclo evolutivo.
+
+Problema a resolver:
+  Encontrar el camino de menor costo entre dos nodos en un grafo,
+  representando cada individuo como una secuencia de nodos (ruta).
+"""
+
+import random
+
+# ==================================================
+# Definicion del grafo con costos
+# Cada nodo tiene una lista de tuplas (vecino, costo)
+# ==================================================
+grafo = {
+    'A': [('B', 2), ('C', 4)],
+    'B': [('D', 3), ('E', 5)],
+    'C': [('E', 2), ('F', 6)],
+    'D': [('G', 4), ('H', 2)],
+    'E': [('G', 3), ('H', 4)],
+    'F': [('H', 1), ('I', 3)],
+    'G': [('J', 2)],
+    'H': [('J', 1), ('I', 2)],
+    'I': [('J', 3)],
+    'J': []  # Nodo objetivo
+}
+
+# Todos los nodos del grafo
+NODOS = list(grafo.keys())
+INICIO   = 'A'
+OBJETIVO = 'J'
+
+# ==================================================
+# Funcion de Fitness
+# Evalua que tan buena es una ruta (individuo)
+# Menor costo = mayor aptitud
+# ==================================================
+def calcular_fitness(individuo):
+    costo_total = 0
+    visitados   = []
+
+    for i in range(len(individuo) - 1):
+        nodo_actual = individuo[i]
+        nodo_sig    = individuo[i + 1]
+
+        # Penalizar si hay nodos repetidos (ciclos)
+        if nodo_actual in visitados:
+            return float('inf')
+        visitados.append(nodo_actual)
+
+        # Buscar costo de la arista entre nodo_actual y nodo_sig
+        vecinos = grafo.get(nodo_actual, [])
+        costo_arista = None
+        for vecino, costo in vecinos:
+            if vecino == nodo_sig:
+                costo_arista = costo
+                break
+
+        # Penalizar si no existe conexion directa
+        if costo_arista is None:
+            return float('inf')
+
+        costo_total += costo_arista
+
+    # Penalizar si la ruta no termina en el objetivo
+    if individuo[-1] != OBJETIVO:
+        return float('inf')
+
+    return costo_total
+
+# ==================================================
+# Generar un individuo aleatorio (ruta aleatoria)
+# Parte desde INICIO y agrega nodos aleatorios
+# hasta llegar al OBJETIVO o alcanzar longitud maxima
+# ==================================================
+def generar_individuo():
+    ruta   = [INICIO]
+    actual = INICIO
+
+    for _ in range(len(NODOS)):
+        vecinos = [v for v, _ in grafo.get(actual, [])]
+        if not vecinos:
+            break
+        siguiente = random.choice(vecinos)
+        ruta.append(siguiente)
+        actual = siguiente
+        if actual == OBJETIVO:
+            break
+
+    return ruta
+
+# ==================================================
+# Generar poblacion inicial
+# Crea n individuos aleatorios
+# ==================================================
+def generar_poblacion(tam_poblacion):
+    return [generar_individuo() for _ in range(tam_poblacion)]
+
+# ==================================================
+# Seleccion por Torneo
+# Elige el mejor individuo de un grupo aleatorio
+# ==================================================
+def seleccion_torneo(poblacion, tam_torneo=3):
+    torneo    = random.sample(poblacion, min(tam_torneo, len(poblacion)))
+    ganador   = min(torneo, key=calcular_fitness)
+    return ganador
+
+# ==================================================
+# Cruce (Crossover) de un punto
+# Combina dos padres para generar un hijo
+# ==================================================
+def cruce(padre1, padre2):
+    # Encontrar nodos comunes entre ambos padres
+    comunes = [n for n in padre1 if n in padre2 and n != INICIO]
+
+    if not comunes:
+        # Si no hay nodos comunes, retornar copia del padre1
+        return padre1[:]
+
+    # Elegir un punto de cruce aleatorio (nodo comun)
+    punto = random.choice(comunes)
+
+    # Tomar la parte izquierda del padre1 hasta el punto
+    idx1 = padre1.index(punto)
+    # Tomar la parte derecha del padre2 desde el punto
+    idx2 = padre2.index(punto)
+
+    hijo = padre1[:idx1] + padre2[idx2:]
+    return hijo
+
+# ==================================================
+# Mutacion
+# Cambia aleatoriamente un nodo en la ruta
+# para mantener diversidad genetica
+# ==================================================
+def mutacion(individuo, tasa_mutacion=0.2):
+    if random.random() < tasa_mutacion:
+        # Elegir una posicion aleatoria (sin tocar el inicio)
+        if len(individuo) > 2:
+            idx     = random.randint(1, len(individuo) - 2)
+            nodo_anterior = individuo[idx - 1]
+            vecinos = [v for v, _ in grafo.get(nodo_anterior, [])]
+            if vecinos:
+                # Reemplazar el nodo en esa posicion con un vecino aleatorio
+                nuevo_nodo       = random.choice(vecinos)
+                individuo[idx]   = nuevo_nodo
+                # Truncar la ruta desde ese punto para evitar inconsistencias
+                individuo        = individuo[:idx + 1]
+    return individuo
+
+# ==================================================
+# ALGORITMO GENETICO PRINCIPAL
+# ==================================================
+def algoritmo_genetico(tam_poblacion=10,
+                        generaciones=20,
+                        tasa_mutacion=0.2,
+                        tam_torneo=3):
+
+    print("\n" + "="*55)
+    print("        INICIANDO ALGORITMO GENETICO")
+    print("="*55)
+    print(f"Nodo Inicio       : '{INICIO}'")
+    print(f"Nodo Objetivo     : '{OBJETIVO}'")
+    print(f"Tam. Poblacion    : {tam_poblacion}")
+    print(f"Generaciones      : {generaciones}")
+    print(f"Tasa de Mutacion  : {tasa_mutacion}")
+    print(f"Tam. Torneo       : {tam_torneo}")
+    print("="*55 + "\n")
+
+    # Generar poblacion inicial
+    poblacion      = generar_poblacion(tam_poblacion)
+    mejor_individuo = None
+    mejor_fitness   = float('inf')
+
+    for gen in range(1, generaciones + 1):
+        print(f"Generacion {gen}:")
+
+        # Evaluar fitness de cada individuo
+        fitnesses = [(ind, calcular_fitness(ind)) for ind in poblacion]
+        fitnesses.sort(key=lambda x: x[1])
+
+        # Mostrar los 3 mejores de esta generacion
+        print(f"  Top 3 individuos:")
+        for ind, fit in fitnesses[:3]:
+            ruta_str = ' -> '.join(ind)
+            fit_str  = str(fit) if fit != float('inf') else 'invalido'
+            print(f"    Ruta: {ruta_str} | Costo: {fit_str}")
+
+        # Actualizar mejor solucion global
+        if fitnesses[0][1] < mejor_fitness:
+            mejor_fitness   = fitnesses[0][1]
+            mejor_individuo = fitnesses[0][0]
+            print(f"  Nueva mejor solucion: {' -> '.join(mejor_individuo)} | Costo: {mejor_fitness}")
+
+        # Si encontramos una solucion valida y optima, terminar
+        if mejor_fitness != float('inf') and mejor_fitness == 0:
+            break
+
+        # Generar nueva poblacion mediante seleccion, cruce y mutacion
+        nueva_poblacion = []
+
+        # Elitismo: conservar el mejor individuo directamente
+        nueva_poblacion.append(fitnesses[0][0])
+
+        # Generar el resto de la nueva poblacion
+        while len(nueva_poblacion) < tam_poblacion:
+            padre1 = seleccion_torneo(poblacion, tam_torneo)
+            padre2 = seleccion_torneo(poblacion, tam_torneo)
+            hijo   = cruce(padre1, padre2)
+            hijo   = mutacion(hijo, tasa_mutacion)
+            nueva_poblacion.append(hijo)
+
+        poblacion = nueva_poblacion
+        print()
+
+    # Resultado final
+    print("="*55)
+    if mejor_individuo and mejor_fitness != float('inf'):
+        print(f"Mejor ruta encontrada : {' -> '.join(mejor_individuo)}")
+        print(f"Costo total           : {mejor_fitness}")
+    else:
+        print(f"No se encontro una ruta valida al objetivo '{OBJETIVO}'.")
+    print("="*55)
+    return mejor_individuo
+
+# ==================================================
+# EJECUCION PRINCIPAL
+# ==================================================
+if __name__ == "__main__":
+    algoritmo_genetico(
+        tam_poblacion = 10,
+        generaciones  = 20,
+        tasa_mutacion = 0.2,
+        tam_torneo    = 3
+    )
