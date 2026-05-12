@@ -1,0 +1,329 @@
+"""
+Acondicionamiento del Corte (Cutset Conditioning)
+
+Tecnica que combina busqueda con la estructura del grafo de
+restricciones. Identifica un conjunto de corte (cutset): variables
+cuya eliminacion convierte el grafo en un arbol aciclico.
+Los arboles de restricciones se resuelven en tiempo lineal.
+
+Pasos del algoritmo:
+  1. Identificar el cutset del grafo de restricciones.
+  2. Enumerar todas las asignaciones posibles del cutset.
+  3. Para cada asignacion del cutset, resolver el arbol
+     restante en tiempo lineal con propagacion.
+  4. Si el arbol tiene solucion consistente, retornar
+     la solucion completa.
+
+Complejidad:
+  Sin cutset : O(d^n)      backtracking tradicional
+  Con cutset : O(d^c * n)  c = tamaño del cutset (c << n)
+  Arbol puro : O(n * d^2)  solucion en tiempo lineal
+
+Problema implementado:
+  Coloreo de Mapa de Australia con grafo de restricciones.
+"""
+
+from itertools import product
+
+# ==================================================
+# CLASE: Grafo de Restricciones
+# Representa la estructura del CSP como grafo
+# para identificar el cutset y el arbol restante
+# ==================================================
+class GrafoRestricciones:
+    def __init__(self, variables, adyacencias):
+        """
+        variables   : lista de variables del CSP.
+        adyacencias : lista de pares (var1, var2) con restriccion.
+        """
+        self.variables   = variables
+        self.adyacencias = adyacencias
+        # Construir lista de adyacencia
+        self.grafo = {v: set() for v in variables}
+        for var1, var2 in adyacencias:
+            self.grafo[var1].add(var2)
+            self.grafo[var2].add(var1)
+
+    def es_arbol(self, variables_excluidas=set()):
+        """
+        Verifica si el subgrafo (excluyendo variables_excluidas)
+        es un arbol (conexo y aciclico).
+        """
+        nodos = [v for v in self.variables if v not in variables_excluidas]
+        if not nodos:
+            return True
+
+        # Verificar que sea aciclico usando DFS
+        visitados = set()
+        pila      = [(nodos[0], None)]
+
+        while pila:
+            nodo, padre = pila.pop()
+            if nodo in visitados:
+                return False  # Ciclo detectado
+            visitados.add(nodo)
+            for vecino in self.grafo[nodo]:
+                if vecino not in variables_excluidas and vecino != padre:
+                    pila.append((vecino, nodo))
+
+        # Verificar que sea conexo
+        return len(visitados) == len(nodos)
+
+    def encontrar_cutset(self):
+        """
+        Encuentra un cutset: conjunto minimo de variables cuya
+        eliminacion convierte el grafo en un arbol.
+        Usa busqueda incremental por tamaño del cutset.
+        """
+        # Probar cutsets de tamaño creciente
+        for tamanio in range(len(self.variables)):
+            cutset = self._buscar_cutset_tamanio(tamanio)
+            if cutset is not None:
+                return cutset
+        return self.variables  # Caso extremo
+
+    def _buscar_cutset_tamanio(self, tamanio):
+        """
+        Busca un cutset de exactamente 'tamanio' variables.
+        """
+        from itertools import combinations
+        for candidato in combinations(self.variables, tamanio):
+            if self.es_arbol(set(candidato)):
+                return list(candidato)
+        return None
+
+    def obtener_arbol(self, cutset):
+        """
+        Retorna las variables que forman el arbol
+        despues de eliminar el cutset.
+        """
+        return [v for v in self.variables if v not in cutset]
+
+    def obtener_orden_topologico(self, variables_arbol, cutset):
+        """
+        Obtiene el orden topologico del arbol para resolverlo
+        de forma eficiente (de hojas hacia la raiz).
+        """
+        if not variables_arbol:
+            return []
+
+        # Construir subgrafo del arbol
+        subgrafo = {v: set() for v in variables_arbol}
+        for v in variables_arbol:
+            for vecino in self.grafo[v]:
+                if vecino in variables_arbol:
+                    subgrafo[v].add(vecino)
+
+        # BFS desde la raiz para obtener orden
+        raiz  = variables_arbol[0]
+        orden = []
+        visitados = set()
+        cola  = [raiz]
+
+        while cola:
+            nodo = cola.pop(0)
+            if nodo in visitados:
+                continue
+            visitados.add(nodo)
+            orden.append(nodo)
+            for vecino in subgrafo[nodo]:
+                if vecino not in visitados:
+                    cola.append(vecino)
+
+        return orden
+
+
+# ==================================================
+# CLASE: CSP con Acondicionamiento del Corte
+# ==================================================
+class CSPCutset:
+    def __init__(self, variables, dominios, adyacencias, restriccion_fn):
+        """
+        variables      : lista de variables del CSP.
+        dominios       : diccionario {variable: [valores posibles]}.
+        adyacencias    : lista de pares (var1, var2) con restriccion.
+        restriccion_fn : funcion que evalua si dos valores son compatibles.
+        """
+        self.variables      = variables
+        self.dominios       = {v: list(d) for v, d in dominios.items()}
+        self.adyacencias    = adyacencias
+        self.restriccion_fn = restriccion_fn
+        self.grafo          = GrafoRestricciones(variables, adyacencias)
+
+    def son_adyacentes(self, var1, var2):
+        """Verifica si dos variables tienen restriccion directa."""
+        return (var1, var2) in self.adyacencias or \
+               (var2, var1) in self.adyacencias
+
+    def es_consistente_con_asignacion(self, variable, valor, asignacion):
+        """
+        Verifica si asignar 'valor' a 'variable' es consistente
+        con la asignacion parcial actual.
+        """
+        for var_asignada, val_asignado in asignacion.items():
+            if self.son_adyacentes(variable, var_asignada):
+                if not self.restriccion_fn(valor, val_asignado):
+                    return False
+        return True
+
+    def resolver_arbol(self, variables_arbol, asignacion_cutset):
+        """
+        Resuelve el subproblema en forma de arbol en tiempo lineal.
+        Usa propagacion de restricciones hacia adelante en el arbol.
+        """
+        if not variables_arbol:
+            return {}
+
+        # Obtener orden topologico del arbol
+        orden = self.grafo.obtener_orden_topologico(
+            variables_arbol, list(asignacion_cutset.keys())
+        )
+
+        # Dominios reducidos por la asignacion del cutset
+        dominios_reducidos = {}
+        for v in variables_arbol:
+            dominios_reducidos[v] = [
+                val for val in self.dominios[v]
+                if self.es_consistente_con_asignacion(v, val, asignacion_cutset)
+            ]
+            if not dominios_reducidos[v]:
+                return None  # Sin valores validos, fallo inmediato
+
+        # Resolver el arbol en orden topologico (backtracking lineal)
+        return self._backtracking_arbol(orden, dominios_reducidos, asignacion_cutset)
+
+    def _backtracking_arbol(self, orden, dominios, asignacion_base):
+        """
+        Backtracking sobre el arbol siguiendo el orden topologico.
+        En un arbol esto es O(n * d^2), mucho mas eficiente.
+        """
+        asignacion = dict(asignacion_base)
+
+        def bt(idx):
+            if idx == len(orden):
+                # Retornar solo las variables del arbol
+                return {v: asignacion[v] for v in orden}
+            variable = orden[idx]
+            for valor in dominios[variable]:
+                if self.es_consistente_con_asignacion(variable, valor, asignacion):
+                    asignacion[variable] = valor
+                    resultado = bt(idx + 1)
+                    if resultado is not None:
+                        return resultado
+                    del asignacion[variable]
+            return None
+
+        return bt(0)
+
+    # ==================================================
+    # ALGORITMO PRINCIPAL: Acondicionamiento del Corte
+    # ==================================================
+    def resolver(self):
+        print("\n" + "="*55)
+        print("   ALGORITMO: ACONDICIONAMIENTO DEL CORTE")
+        print("="*55)
+        print(f"Variables totales : {self.variables}")
+
+        # PASO 1: Identificar el cutset
+        cutset = self.grafo.encontrar_cutset()
+        variables_arbol = self.grafo.obtener_arbol(cutset)
+
+        print(f"Cutset encontrado : {cutset}")
+        print(f"Variables arbol   : {variables_arbol}")
+        print(f"Tamanio cutset    : {len(cutset)}")
+        print(f"Tamanio arbol     : {len(variables_arbol)}")
+        print("="*55 + "\n")
+
+        # PASO 2: Enumerar todas las asignaciones del cutset
+        dominios_cutset = [self.dominios[v] for v in cutset]
+        total_combinaciones = 1
+        for d in dominios_cutset:
+            total_combinaciones *= len(d)
+
+        print(f"Combinaciones del cutset a probar: {total_combinaciones}\n")
+
+        for i, combinacion in enumerate(product(*dominios_cutset), 1):
+            asignacion_cutset = dict(zip(cutset, combinacion))
+
+            print(f"Combinacion {i}: {asignacion_cutset}")
+
+            # Verificar que la asignacion del cutset sea consistente
+            cutset_valido = True
+            for var1 in cutset:
+                for var2 in cutset:
+                    if var1 != var2 and self.son_adyacentes(var1, var2):
+                        if not self.restriccion_fn(
+                            asignacion_cutset[var1],
+                            asignacion_cutset[var2]
+                        ):
+                            cutset_valido = False
+                            break
+                if not cutset_valido:
+                    break
+
+            if not cutset_valido:
+                print(f"  Cutset inconsistente, saltando...\n")
+                continue
+
+            print(f"  Cutset consistente, resolviendo arbol...")
+
+            # PASO 3: Resolver el arbol restante
+            solucion_arbol = self.resolver_arbol(
+                variables_arbol, asignacion_cutset
+            )
+
+            if solucion_arbol is not None:
+                # PASO 4: Combinar cutset + arbol = solucion completa
+                solucion_completa = {**asignacion_cutset, **solucion_arbol}
+                print(f"  Arbol resuelto exitosamente!\n")
+                return solucion_completa
+            else:
+                print(f"  Arbol sin solucion para este cutset, continuando...\n")
+
+        return None  # No se encontro solucion
+
+
+# ==================================================
+# PROBLEMA: Coloreo de Mapa de Australia
+# ==================================================
+def coloreo_mapa():
+    print("\n" + "="*55)
+    print("   PROBLEMA: COLOREO DE MAPA DE AUSTRALIA")
+    print("="*55)
+
+    variables = ['WA', 'NT', 'SA', 'Q', 'NSW', 'V', 'T']
+    dominios  = {v: ['Rojo', 'Verde', 'Azul'] for v in variables}
+
+    adyacencias = [
+        ('WA', 'NT'), ('WA', 'SA'),
+        ('NT', 'SA'), ('NT', 'Q'),
+        ('SA', 'Q'),  ('SA', 'NSW'),
+        ('SA', 'V'),  ('Q',  'NSW'),
+        ('NSW','V')
+    ]
+
+    print(f"Variables   : {variables}")
+    print(f"Dominio     : ['Rojo', 'Verde', 'Azul']")
+    print(f"Adyacencias : {len(adyacencias)} pares de regiones\n")
+
+    # Crear y resolver el CSP con cutset conditioning
+    csp      = CSPCutset(variables, dominios, adyacencias,
+                         restriccion_fn=lambda a, b: a != b)
+    solucion = csp.resolver()
+
+    print("="*55)
+    if solucion:
+        print("Solucion encontrada:")
+        for region, color in solucion.items():
+            print(f"  {region:5} -> {color}")
+    else:
+        print("No se encontro solucion.")
+    print("="*55)
+    return solucion
+
+
+# ==================================================
+# EJECUCION PRINCIPAL
+# ==================================================
+if __name__ == "__main__":
+    coloreo_mapa()
